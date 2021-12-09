@@ -36,9 +36,10 @@ convert_tr () { # <FILE>
     fi
 }
 
-update_locale () {
-    local mod_conf="mod.conf" files
-    local template="locale/template.txt"
+update_locale () { # [DIR]
+    local dir="${1:-.}"
+    local mod_conf="$dir/mod.conf" files
+    local template="$dir/locale/template.txt"
 
     test -f "$mod_conf"|| error "'$mod_conf' not exists"
     local modname="$(sed 's@^name\s*=\s*\(\S\+\)\s*@\1@;tn;d;:n' "$mod_conf")"
@@ -48,13 +49,13 @@ update_locale () {
 
     files=("$template")
     local src dst
-    for src in locale/??.txt locale/??_??.txt
+    for src in "$dir"/locale/??.txt "$dir"/locale/??_??.txt
     do  test -f "$src" || continue
         if [ "$OPT_DIFF" = yes ]; then
             dst="$src"
         else
             dst="${src%.txt}".tr
-            dst="locale/$modname.${dst#locale/}"
+            dst="$dir/locale/$modname.${dst#$dir/locale/}"
 
             if [ "$OPT_GIT" = yes ]; then
                 git mv "$src" "$dst"
@@ -67,7 +68,7 @@ update_locale () {
     done
     convert_tr "$template" || exit $?
 
-    xgettext --keyword=S -o - $(find -name \*.lua) \
+    xgettext -L Lua --from-code=UTF-8 --keyword=S -o - $(find "$dir" -name \*.lua) \
         | sed 's@^msgid "\(.*\)"@\1@;tn;d;:n;s/\\"/"/g' \
         | { rc=0
             while read -r line
@@ -116,4 +117,11 @@ EOT
     shift
 done
 
-update_locale
+if [ -f modpack.conf ]; then
+    for dir in *
+    do  test -d "$dir" || continue
+        update_locale "$dir" || exit $?
+    done
+else
+    update_locale .
+fi
