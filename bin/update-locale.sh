@@ -17,7 +17,7 @@ convert_tr () { # <FILE>
     local file="$1" magic="# textdomain: $modname" i=1 script e r cr="
 "
     while [ $i -le 8 ]
-    do  e="$e\\(.*\\)%s"
+    do  e="$e\\(.*\\)%[dfs]"
         r="$r\\$i@$i"
         let i++
         script=";s/=$e\\(.*\\)\$/=$r\\$i/$cr$script"
@@ -25,6 +25,8 @@ convert_tr () { # <FILE>
     done
     script=';s|^\(.\+\S\)\s*=\s*\(.*\)|\1=\2|g'"$cr$script"
     #script=';s/\([@=]\|\\n\)/@&/g'"$cr$script"
+    #script=';s/\xc2\xa0/ /g'
+    #script=';s/%%/%/g'
 
     grep -q "^[^#]*=.*=" "$file" && error "bug: can't handle '=' in text:("
     grep -qF "$magic" "$file" || script="1 i $magic\n$cr$script"
@@ -48,25 +50,34 @@ update_locale () { # [DIR]
     test -f "$template" || error "template '$template' not exists"
 
     files=("$template")
+
     local src dst
-    for src in "$dir"/locale/??.txt "$dir"/locale/??_??.txt
+    test "$OPT_DIFF" = yes || for dst in "$dir/locale/$modname".??{,_??}.tr
+    do  test -f "$dst" && files[${#files[*]}]="$dst"
+    done
+
+    for src in "$dir"/locale/??{,_??}.txt
     do  test -f "$src" || continue
+        dst="${src%.txt}".tr
+        dst="$dir/locale/$modname.${dst#$dir/locale/}"
+
         if [ "$OPT_DIFF" = yes ]; then
             dst="$src"
-        else
-            dst="${src%.txt}".tr
-            dst="$dir/locale/$modname.${dst#$dir/locale/}"
-
+        elif [ ! -f "$dst" ]; then
             if [ "$OPT_GIT" = yes ]; then
                 git mv "$src" "$dst"
             else
                 mv "$src" "$dst"
             fi
             files[${#files[*]}]="$dst"
+            #convert_tr "$dst" || exit $?
         fi
-        convert_tr "$dst" || exit $?
     done
-    convert_tr "$template" || exit $?
+
+    #convert_tr "$template" || exit $?
+    for dst in "${files[@]}"
+    do  convert_tr "$dst" || exit $?
+    done
 
     xgettext -L Lua --from-code=UTF-8 --keyword=S -o - $(find "$dir" -name \*.lua) \
         | sed 's@^msgid "\(.*\)"@\1@;tn;d;:n;s/\\"/"/g' \
@@ -75,8 +86,8 @@ update_locale () { # [DIR]
             do  for file in "${files[@]}"
                 do  grep -qF "$line=" "$file" && continue
                     case "$line" in
-                    *%s*)
-                        echo "WARNING: old placeholder '%s' found. message ignored: $line" >&2
+                    *%[dfs]*)
+                        echo "WARNING: illegal placeholder found. message ignored: $line" >&2
                         rc=1
                         continue
                         ;;
