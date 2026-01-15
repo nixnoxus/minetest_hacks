@@ -86,27 +86,134 @@ class Vec:
         v = self.diff(other)
         return max(abs(v.x), abs(v.y), abs(v.z))
 
-class Vector(Vec):
+    def radius(self, r:int):
+        assert r == abs(r)
+        for x in range(-r, r +1):
+            for y in range(-r, r +1):
+                for z in range(-r, r +1):
+                    yield Vec(self.x +x, self.y +y, self.z +z)
+
+class VecStat:
+        funcs = [ 'min', 'max', 'sum' ]
+
+        def __init__(self, *vecs):
+            for func in __class__.funcs:
+                setattr(self, func, Vec())
+
+            self.count = 0
+
+            self.add(*vecs)
+
+        def add(self, *vecs):
+
+            def each(func, dst:Vec, src:Vec):
+                for key in [ 'x', 'y', 'z' ]:
+                    d = getattr(dst, key)
+                    s = getattr(src, key)
+                    if s is None:
+                        return
+                    elif d is None:
+                        setattr(dst, key, s)
+                    elif func == 'sum':
+                        setattr(dst, key, d +s)
+                    elif func == 'min':
+                        if s < d: setattr(dst, key, s)
+                    elif func == 'max':
+                        if s > d: setattr(dst, key, s)
+                    else:
+                        raise ValueError(f"unsupported func: {func}")
+
+            for src in vecs:
+                for func in __class__.funcs:
+                    each(func, getattr(self, func), src)
+
+                self.count += 1
+
+        def __repr__(self):
+            ary = []
+            for key in [ 'x', 'y', 'z' ]:
+                ary.append(f"{getattr(self.min, key)} <= {key} <= {getattr(self.max, key)}")
+            return ",".join(ary)
+
+        def as_dict(self):
+            data = { 'count': self.count }
+            for key in [ 'x', 'y', 'z' ]:
+                data[key] = {}
+                for func in __class__.funcs:
+                    data[key][func] = getattr(getattr(self, func), key)
+            return data
+
+class Vector(Vec): # ~ MapBlock
     def __init__(self, block_pos):
+        if type(block_pos) == int:
+            self._by_blocks_pos(block_pos)
+        elif isinstance(block_pos, Vec):
+            self._by_vec(block_pos)
+        elif type(block_pos) == str:
+            m = re.search(r'^\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*$', block_pos)
+            assert m
+            self._by_vec(Vec \
+                ( int(m.group(1)) // MAP_BLOCKSIZE
+                , int(m.group(2)) // MAP_BLOCKSIZE
+                , int(m.group(3)) // MAP_BLOCKSIZE
+                ))
+            self.pos = (int(m.group(1)) % MAP_BLOCKSIZE) * (MAP_BLOCKSIZE**0) \
+                +  (int(m.group(2)) % MAP_BLOCKSIZE) * (MAP_BLOCKSIZE**1) \
+                +  (int(m.group(3)) % MAP_BLOCKSIZE) * (MAP_BLOCKSIZE**2)
+            #print(self.__dict__)
+        else:
+            raise ValueError(f"unsupported type: {type(block_pos)}")
+
+    def _by_blocks_pos(self, block_pos:int):
         self.block_pos = block_pos
-        def unsignedToSigned(i, max_positive):
+        vec = self.pos2vec()
+        self.x = vec.x
+        self.y = vec.y
+        self.z = vec.z
+        self.pos = None
+
+        assert_eq(self.block_pos, self.vec2pos(), "block_pos")
+
+    def _by_vec(self, vec:Vec):
+        self.x = vec.x
+        self.y = vec.y
+        self.z = vec.z
+        self.block_pos = self.vec2pos()
+        self.pos = None
+
+    def pos2vec(self):
+        def unsignedToSigned(i:int, max_positive:int):
             if i < max_positive:
                 return i
             else:
                 return i - 2*max_positive
 
-        self.x = unsignedToSigned(block_pos % 4096, 2048)
-        block_pos = int((block_pos - self.x) / 4096)
-        self.y = unsignedToSigned(block_pos % 4096, 2048)
-        block_pos = int((block_pos - self.y) / 4096)
-        self.z = unsignedToSigned(block_pos % 4096, 2048)
+        i = self.block_pos
+        x = unsignedToSigned(i % 4096, 2048)
+        i = int((i - x) / 4096)
+        y = unsignedToSigned(i % 4096, 2048)
+        i = int((i - y) / 4096)
+        z = unsignedToSigned(i % 4096, 2048)
+        return Vec(x,y,z)
 
-    def pos(self, pos):
-        v = Vector(self.block_pos)
-        v.x = v.x * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**0)) % MAP_BLOCKSIZE
-        v.y = v.y * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**1)) % MAP_BLOCKSIZE
-        v.z = v.z * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**2)) % MAP_BLOCKSIZE
-        return v
+    def vec2pos(self):
+        def int64(u:int):
+            while u >= 2**63:
+                u -= 2**64
+            while u <= -2**63:
+                u += 2**64
+            return u
+
+        return int64(self.z * 16777216 + self.y * 4096 + self.x)
+
+    def node_pos(self, pos:int = None):
+        pos = pos or self.pos or 0
+        return Vec \
+            ( self.x * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**0)) % MAP_BLOCKSIZE
+            , self.y * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**1)) % MAP_BLOCKSIZE
+            , self.z * MAP_BLOCKSIZE + int(pos // (MAP_BLOCKSIZE**2)) % MAP_BLOCKSIZE
+            )
+
 
 class Node:
     def __init__(self, name, param1, param2):
@@ -138,7 +245,7 @@ class Block:
         self.version = struct.unpack('B', blockdata[0:0 + 1])[0]
         logging.info("block block_pos: %d (%s) pos %s version: %d zstd bytes: %d"
             , block_pos, self.vector
-            , self.vector.pos(0)
+            , self.vector.node_pos(0)
             , self.version
             , len(blockdata) -1
             )
@@ -236,7 +343,7 @@ class Block:
             pos = p_get("u16")
             logging.debug(" metadata %d/%d pos %d %s node.name %s"
                 , 1 + i, self.count_of_metadata
-                , pos, self.vector.pos(pos), self.id2name[self.get_param0(pos)]
+                , pos, self.vector.node_pos(pos), self.id2name[self.get_param0(pos)]
                 )
             self.metadata[pos] = {}
 
@@ -329,7 +436,7 @@ class Block:
 
                 logging.debug(" object %d/%d '%s' pos %s hp %i %s"
                     , 1 + n, self.static_object_count
-                    , o.name, self.vector.pos(0).offset(o.pos)
+                    , o.name, self.vector.node_pos(0).offset(o.pos)
                     , o.hp, o.data[:20] + "..."
                     )
                 #logging.warning(" [%d] var rest %d bytes: %s", self.ptr, len(self.data) - self.ptr, hexdump(self.data[self.ptr:]))
@@ -375,7 +482,7 @@ class Block:
                     t = self.timer[-1]
                     logging.debug(" timer %d/%d pos %d %s node %s timeout %f elapsed %f"
                         , 1 + i, self.num_of_timers
-                        , t.pos, self.vector.pos(t.pos), self.id2name[self.get_param0(t.pos)]
+                        , t.pos, self.vector.node_pos(t.pos), self.id2name[self.get_param0(t.pos)]
                         , t.timeout, t.elapsed
                         )
 
@@ -449,35 +556,163 @@ class Block:
         for t in self.timer:
             if t.pos == pos: return t
 
-    def dump_node(self, pos):
+    def dump_node(self, pos, key:str = None, **kwargs):
         t = self.get_timer(pos)
         t = t and { **t.__dict__, "pos": None }
-        dumper({ str(self.vector.pos(pos)): {
-             **self.get_node(pos).__dict__
+        dumper({ key or str(self.vector.node_pos(pos)): {
+             **{ **self.vector.node_pos(pos).__dict__
+               , **self.get_node(pos).__dict__
+               }
             , "metadata": self.get_metadata(pos)
             , "inventory": self.get_inventory(pos)
             , "timer": t
+            , **kwargs
             }})
 
 
 class Map:
-    def __init__(self, sqlite_file, *blocks_pos):
+    def __init__(self, sqlite_file, args):
         self.db = sqlite3.connect(sqlite_file)
-        self.blocks_pos = [ *blocks_pos ]
+        self.db.row_factory = sqlite3.Row
 
-    #def get_block(self, pos):
-    #    self.blocks_pos = [*blocks_pos]
+        cur = self.db.cursor()
+        res = cur.execute("PRAGMA table_info(`blocks`)")
+        rows = res.fetchall()
+        if len(rows) == 2:
+            assert rows[0][1] == "pos", rows[0][1]
+            assert rows[1][1] == "data", rows[1][1]
+            self.world_ge_5_12 = False
+        else:
+            assert len(rows) == 4
+            assert rows[0][1] == "x", rows[0][1]
+            assert rows[1][1] == "y", rows[1][1]
+            assert rows[2][1] == "z", rows[2][1]
+            assert rows[3][1] == "data", rows[3][1]
+            self.world_ge_5_12 = True
+
+            def sel_block(v:Vector = None):
+                if v is None:
+                    return ("SELECT `x`, `y`, `z`, `data` FROM `blocks`")
+                else:
+                    return ("SELECT `x`, `y`, `z`, `data` FROM `blocks` WHERE `x` == ? AND `y` == ? AND `z` == ?", (v.x, v.y, v.z,))
+            def row2block(row):
+                return Block(Vec(row['x'], row['y'], row['z']), row['data'])
+
+            __class__.sel_block = sel_block
+            __class__.row2block = row2block
+
+        self.args = args
+        self.vectors = []
+        for b in args.blocks_pos:
+            self.vectors.append(Vector(b))
+
+        self.node_stat = VecStat()
+        self.node_vecs = []
+
+        if not self.args.json:
+            self.short_keys = list(chr(a) for a in \
+                ( *list(range(ord("A"),ord("Z")+1))
+                , *list(range(ord("0"),ord("9")+1))
+                , *list(range(ord("a"),ord("z")+1))
+                ))
+        else:
+            self.short_keys = []
+
+    @staticmethod
+    def row2block(row):
+        return Block(row['pos'], row['data'])
+
+    @staticmethod
+    def sel_block(v:Vector = None):
+        if v is None:
+            return ("SELECT `pos`, `data` FROM `blocks`")
+        else:
+            return ("SELECT `pos`, `data` FROM `blocks` WHERE `pos` == ?", (v.block_pos,))
 
     def iter_blocks(self):
         cur = self.db.cursor()
 
-        if len(self.blocks_pos) > 0:
-            for p in self.blocks_pos:
-                for row in cur.execute("SELECT `pos`, `data` FROM `blocks` WHERE `pos` == ?", (p,)):
-                    yield Block(row[0], row[1])
+        if len(self.vectors) == 0:
+            for row in cur.execute(__class__.sel_block(None)):
+                yield __class__.row2block(row)
         else:
-            for row in cur.execute("SELECT `pos`, `data` FROM `blocks`"): # LIMIT 30"):
-                yield Block(row[0], row[1])
+            for v in self.vectors:
+                for v in v.radius(self.args.radius):
+                    for row in cur.execute(*__class__.sel_block(v)):
+                        yield __class__.row2block(row)
+
+    def get_short_key(self, i:int) -> str:
+        return str(self.short_keys[i] if i < len(self.short_keys) else i)
+
+    def dump_node(self, block:Block, pos):
+        v = block.vector.node_pos(pos)
+
+        kwargs = {}
+        if len(self.vectors) == 1 and self.vectors[0].pos is not None:
+            kwargs["distance"] = { "nodes": v.distance(self.vectors[0].node_pos()) }
+
+        i = len(self.node_vecs)
+        block.dump_node(pos, self.get_short_key(i), **kwargs)
+
+        self.node_stat.add(v)
+        self.node_vecs.append(v)
+
+    def visualize(self):
+        if self.node_stat.count == 0: return
+
+        o_len = max(len(str(y)) for y in \
+            [ self.node_stat.min.y
+            , self.node_stat.max.y
+            , self.node_stat.min.z
+            , self.node_stat.max.z
+            ])
+
+        x_len_max, y_len_max = os.get_terminal_size()
+        x_len_max = (x_len_max or 80) -2 - o_len -1
+        y_len_max = (y_len_max or 25) -2
+
+        def scale(xx, l):
+            if xx <= l:
+                return (1, xx)
+            else:
+                return (xx / l, l)
+
+        x_div, x_len = scale(self.node_stat.max.x - self.node_stat.min.x +1, x_len_max)
+
+        def show(ordinate):
+            y_min = getattr(self.node_stat.min, ordinate)
+            y_div, y_len = scale(getattr(self.node_stat.max, ordinate) - y_min +1, y_len_max)
+
+            rows = []
+            for y in range(y_len):
+                cols = []
+                for x in range(x_len):
+                    cols.append(".")
+                rows.append(cols)
+
+            def mark_vector(v:Vec, c:str):
+                x = (v.x - self.node_stat.min.x) / x_div
+                y = (getattr(v, ordinate) - y_min) / y_div
+                rows[int(y)][int(x)] = c
+
+            # mark basis vector
+            if len(self.vectors) == 1 and self.vectors[0].pos is not None:
+                mark_vector(self.vectors[0].node_pos(), "*")
+
+            for i in range(0, len(self.node_vecs)):
+                mark_vector(self.node_vecs[i], self.get_short_key(i))
+
+            print(f"{ordinate} +/-{y_div/2:.2f} \\ x +/-{x_div/2:.2f}")
+            for y in range(y_len):
+                i = y_len -1 -y
+                print(f"{int(y_min + i*y_div + y_div/2):{o_len}} "  + "".join(rows[i]))
+            print()
+        show("z")
+        show("y")
+
+    def get_block_pos_stat(self):
+        stat = VecStat(*(block.vector for block in self.iter_blocks()))
+        dumper({ "block": stat.as_dict() })
 
     def get_block_stat(self):
         block_stat = {}
@@ -504,7 +739,7 @@ class Map:
                 block_stat[name]['y'][y] += 1
 
         """
-        if len(self.blocks_pos) == 0:
+        if len(self.vectors) == 0:
             with open("block-stat.json", "w") as f:
                 json.dump(block_stat, f, indent=4)
         """
@@ -512,7 +747,7 @@ class Map:
         return block_stat
 
     def print_block_stat(self, use_dumper = False):
-        if True or len(self.blocks_pos) > 0:
+        if True or len(self.vectors) > 0:
             block_stat = self.get_block_stat()
         else:
             with open("block-stat.json", "r") as f:
@@ -586,11 +821,11 @@ class Map:
                 for pos in range(0, 4096):
                     if id == block.get_param0(pos):
                         if var is None:
-                            logging.info("found %s @ %s", node_name, block.vector.pos(pos))
+                            logging.info("found %s @ %s", node_name, block.vector.node_pos(pos))
                             yield block, pos
                         else:
                             v = block.get_metadata(pos, var)
-                            logging.info("found %s @ %s %s=%s", node_name, block.vector.pos(pos), var, v)
+                            logging.info("found %s @ %s %s=%s", node_name, block.vector.node_pos(pos), var, v)
                             if callable(val):
                                 if val(v):
                                     yield block, pos
@@ -599,12 +834,12 @@ class Map:
 
     def find_node(self, node_name, var=None, val=None):
         for block, pos in self._find_node(node_name, var, val):
-            block.dump_node(pos)
+            self.dump_node(block, pos)
 
     def find_neighbor_node(self, node_name, var=None, val=None):
         ary = []
         for block, pos in self._find_node(node_name, var, val):
-            ary.append(block.vector.pos(pos))
+            ary.append(block.vector.node_pos(pos))
 
         pairs = []
         for a in range(0, len(ary)-1):
@@ -622,7 +857,7 @@ class Map:
                 for list in block.inventory[pos].keys():
                     for ary in block.inventory[pos][list]:
                         if ary and ary[0] == item_name:
-                            block.dump_node(pos)
+                            self.dump_node(block, pos)
 
     def find_object(self, object_name):
         for block in self.iter_blocks():
@@ -633,7 +868,7 @@ class Map:
     def find_timers(self):
         for block in self.iter_blocks():
             for t in block.timer:
-                block.dump_node(t.pos)
+                self.dump_node(block, t.pos)
 
 
 if __name__ == "__main__":
@@ -650,9 +885,10 @@ if __name__ == "__main__":
     a.add_argument('-v', '--verbose', action='store_true', help="show info messages")
     a.add_argument('-d', '--debug', action='store_true', help="show debug and info messages")
     a.add_argument('--json', action='store_true', help="generate JSON output")
+    a.add_argument('--radius', default=0, type=int, help="search radius")
 
     a.add_argument('map_sqlite', help="path to 'map.sqlite'")
-    a.add_argument('block_pos', nargs='*', help="block position(s)")
+    a.add_argument('blocks_pos', nargs='*', help="block position(s)")
 
     g = a.add_argument_group("query options")
     x = g.add_mutually_exclusive_group()
@@ -673,7 +909,7 @@ if __name__ == "__main__":
         def dumper(o):
             data.update(strip_null(o))
 
-    map = Map(args.map_sqlite, *args.block_pos)
+    map = Map(args.map_sqlite, args)
 
     if args.spawners:
         if args.spawners.startswith("mcl_") or args.spawners.startswith("mobs_mc"):
@@ -694,7 +930,10 @@ if __name__ == "__main__":
     elif args.timers:
         map.find_timers()
     else:
+        #map.get_block_pos_stat()
         map.print_block_stat(use_dumper = args.json)
 
     if args.json:
         print(json.dumps(data, indent = 4))
+    else:
+        map.visualize()
