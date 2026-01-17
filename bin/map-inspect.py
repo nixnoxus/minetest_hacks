@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import copy
 import json
 import logging
 import os
@@ -243,7 +244,7 @@ class Block:
     def __init__(self, block_pos, blockdata):
         self.vector = Vector(block_pos)
         self.version = struct.unpack('B', blockdata[0:0 + 1])[0]
-        logging.info("block block_pos: %d (%s) pos %s version: %d zstd bytes: %d"
+        logging.info("block block_pos: %s (%s) pos %s version: %d zstd bytes: %d"
             , block_pos, self.vector
             , self.vector.node_pos(0)
             , self.version
@@ -660,11 +661,17 @@ class Map:
     def visualize(self):
         if self.node_stat.count == 0: return
 
+        if len(self.vectors) == 1:
+            node_stat = copy.deepcopy(self.node_stat)
+            node_stat.add(self.vectors[0].node_pos())
+        else:
+            node_stat = self.node_stat.copy()
+
         o_len = max(len(str(y)) for y in \
-            [ self.node_stat.min.y
-            , self.node_stat.max.y
-            , self.node_stat.min.z
-            , self.node_stat.max.z
+            [ node_stat.min.y
+            , node_stat.max.y
+            , node_stat.min.z
+            , node_stat.max.z
             ])
 
         x_len_max, y_len_max = os.get_terminal_size()
@@ -677,11 +684,11 @@ class Map:
             else:
                 return (xx / l, l)
 
-        x_div, x_len = scale(self.node_stat.max.x - self.node_stat.min.x +1, x_len_max)
+        x_div, x_len = scale(node_stat.max.x - node_stat.min.x +1, x_len_max)
 
         def show(ordinate):
-            y_min = getattr(self.node_stat.min, ordinate)
-            y_div, y_len = scale(getattr(self.node_stat.max, ordinate) - y_min +1, y_len_max)
+            y_min = getattr(node_stat.min, ordinate)
+            y_div, y_len = scale(getattr(node_stat.max, ordinate) - y_min +1, y_len_max)
 
             rows = []
             for y in range(y_len):
@@ -691,13 +698,54 @@ class Map:
                 rows.append(cols)
 
             def mark_vector(v:Vec, c:str):
-                x = (v.x - self.node_stat.min.x) / x_div
-                y = (getattr(v, ordinate) - y_min) / y_div
-                rows[int(y)][int(x)] = c
+                x = int((v.x - node_stat.min.x) / x_div)
+                y = int((getattr(v, ordinate) - y_min) / y_div)
+                if 0 <= x and x < x_len and 0 <= y and y < y_len:
+                    rows[y][x] = c
 
-            # mark basis vector
-            if len(self.vectors) == 1 and self.vectors[0].pos is not None:
-                mark_vector(self.vectors[0].node_pos(), "*")
+            def mark_border(v1:Vec, v2:Vec):
+                v = VecStat(v1, v2)
+
+                def v_set(v:Vec, ordinate:str, value:int):
+                    v2 = Vec(v.x, v.y, v.z)
+                    setattr(v2, ordinate, value)
+                    return v2
+
+                def v_lines(v:VecStat, ordinate:str, c:str):
+                    v_min = getattr(v.min, ordinate)
+                    v_max = getattr(v.max, ordinate)
+
+                    for value in range(v_min +1, v_max):
+                        mark_vector(v_set(v.min, ordinate, value), c)
+                        mark_vector(v_set(v.max, ordinate, value), c)
+
+                    mark_vector(v_set(v.min, ordinate, v_min), "+")
+                    mark_vector(v_set(v.min, ordinate, v_max), "+")
+                    mark_vector(v_set(v.max, ordinate, v_min), "+")
+                    mark_vector(v_set(v.max, ordinate, v_max), "+")
+
+                v_lines(v, "x", "-")
+                v_lines(v, ordinate, "|")
+
+
+            # mark basis vector and borders
+            if len(self.vectors) == 1:
+                if self.vectors[0].pos is not None:
+                    v = self.vectors[0].node_pos()
+                    vb = Vec \
+                        ( v.x // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                        , v.y // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                        , v.z // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                        )
+
+                    # 0: current MapBlock
+                    # 4: active MapBlocks
+                    for r in [ 0, 2, 4 ]:
+                        o_min = (0 - r) * MAP_BLOCKSIZE
+                        o_max = (1 + r) * MAP_BLOCKSIZE
+                        mark_border(vb.offset(Vec(o_min, o_min, o_min)), vb.offset(Vec(o_max, o_max, o_max)))
+
+                    mark_vector(v, "*")
 
             for i in range(0, len(self.node_vecs)):
                 mark_vector(self.node_vecs[i], self.get_short_key(i))
