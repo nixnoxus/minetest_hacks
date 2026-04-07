@@ -665,7 +665,7 @@ class Map:
             node_stat = copy.deepcopy(self.node_stat)
             node_stat.add(self.vectors[0].node_pos())
         else:
-            node_stat = self.node_stat.copy()
+            node_stat = self.node_stat
 
         o_len = max(len(str(y)) for y in \
             [ node_stat.min.y
@@ -686,22 +686,41 @@ class Map:
 
         x_div, x_len = scale(node_stat.max.x - node_stat.min.x +1, x_len_max)
 
+        # X scala
+        x_min = node_stat.min.x
+        ox_len = max(len(str(x)) for x in \
+            [ node_stat.min.x
+            , node_stat.max.x
+            ])
+
+        s_ord = f"{'':{o_len}}"
+        s_top = s_ord
+        s_btm = s_ord
+        for i in range(0, int(min(x_len_max, x_len) / (ox_len+1))):
+            s_ord += f" {int(x_min + i*x_div*(ox_len+1) + x_div/2):{ox_len}}"
+            s_top += f" {'v':{ox_len}}"
+            s_btm += f" {'^':{ox_len}}"
+        print()
+        print(s_ord)
+        print(s_top)
+
         def show(ordinate):
             y_min = getattr(node_stat.min, ordinate)
             y_div, y_len = scale(getattr(node_stat.max, ordinate) - y_min +1, y_len_max)
 
             rows = []
             for y in range(y_len):
-                cols = []
+                rows.append("")
                 for x in range(x_len):
-                    cols.append(".")
-                rows.append(cols)
+                    rows[y] += "."
 
             def mark_vector(v:Vec, c:str):
                 x = int((v.x - node_stat.min.x) / x_div)
                 y = int((getattr(v, ordinate) - y_min) / y_div)
                 if 0 <= x and x < x_len and 0 <= y and y < y_len:
-                    rows[y][x] = c
+                    if len(c) > 1:
+                        c = '(' + c + ')'
+                    rows[y] = rows[y][:x] + c + rows[y][x+len(c):]
 
             def mark_border(v1:Vec, v2:Vec):
                 v = VecStat(v1, v2)
@@ -753,10 +772,15 @@ class Map:
             print(f"{ordinate} +/-{y_div/2:.2f} \\ x +/-{x_div/2:.2f}")
             for y in range(y_len):
                 i = y_len -1 -y
-                print(f"{int(y_min + i*y_div + y_div/2):{o_len}} "  + "".join(rows[i]))
+                print(f"{int(y_min + i*y_div + y_div/2):{o_len}} "  + rows[i])
             print()
         show("z")
+        print(s_btm)
+        print(s_ord)
+        print(s_top)
         show("y")
+        print(s_btm)
+        print(s_ord)
 
     def get_block_pos_stat(self):
         stat = VecStat(*(block.vector for block in self.iter_blocks()))
