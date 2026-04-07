@@ -604,7 +604,7 @@ class Map:
 
         self.args = args
         self.vectors = []
-        for b in args.blocks_pos:
+        for b in args.node_pos:
             self.vectors.append(Vector(b))
 
         self.node_stat = VecStat()
@@ -872,12 +872,13 @@ class Map:
         else:
             fmt_y = " [{:" + str(columns_y) + "}]"
 
-        fmt_n = "{:-" + str(length["count"]) + "} {:" + str(length["name"]) + "} {:5.1f}%" + fmt_n
-        fmt_y = "{:-" + str(length["count"]) + "} {:" + str(length["y"])   + "}{:1}{:5.1f}%" + fmt_y
+        fmt_n = "{:-" + str(length["count"]) + "} {:" + str(length["name"]) + "} {:5.2f}%" + fmt_n
+        fmt_y = "{:-" + str(length["count"]) + "} {:" + str(length["y"])   + "}{:1}{:5.2f}%" + fmt_y
 
         for n in sorted(block_stat.keys(), key=lambda n: block_stat[n]['count']):
             f = block_stat[n]['count'] / total
             print(fmt_n.format(block_stat[n]['count'], n, 100 * f, "#" * int(columns_n * f)))
+            #continue
             y_sorted = sorted(block_stat[n]['y'], reverse = True)
             y_count = len(y_sorted)
             for i in range(0, y_count):
@@ -957,10 +958,10 @@ if __name__ == "__main__":
     a.add_argument('-v', '--verbose', action='store_true', help="show info messages")
     a.add_argument('-d', '--debug', action='store_true', help="show debug and info messages")
     a.add_argument('--json', action='store_true', help="generate JSON output")
-    a.add_argument('--radius', default=0, type=int, help="search radius")
+    a.add_argument('--radius', default=0, type=int, help=f"search radius in MapBlocks(1 = {MAP_BLOCKSIZE} nodes")
 
     a.add_argument('map_sqlite', help="path to 'map.sqlite'")
-    a.add_argument('blocks_pos', nargs='*', help="block position(s)")
+    a.add_argument('node_pos', nargs='*', help="node position(s) (i.e.: 0,0,0")
 
     g = a.add_argument_group("query options")
     x = g.add_mutually_exclusive_group()
