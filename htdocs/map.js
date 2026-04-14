@@ -26,6 +26,9 @@ var map =
     , center: { x:-620, z:0 }
     , offset: { x:null, z:null }
     , size: {x:null,z:null }
+    , labels:
+        [ { x:0, z:0, text: "spawn", type: "poi" }
+        ]
     , cb_draw_map_fin: null
     };
 
@@ -152,6 +155,26 @@ window.onload = function () {
 
     document.getElementById("tool").onchange = function() {
         map.tool = document.getElementById("tool").value;
+    }
+
+    //function addPOI(pois) {
+    //var sel = document.getElementById('poi');
+    map.labels.forEach((label) => {
+        if (label.type == "poi") {
+            var opt = document.createElement('option');
+            label.value = opt.value = label.x + "," + label.z;
+            opt.innerHTML = (label.text || "")
+                + " (" + label.x
+                + ((label.y != undefined) ? "," + label.y : "")
+                + "," + label.z
+                + ")";
+            poi.appendChild(opt);
+        }
+    });
+
+    document.getElementById("poi").onchange = function() {
+        center.value = this.value;
+        center.onchange();
     }
 
     // set current values
@@ -282,6 +305,54 @@ function draw_grid() {
     ctx.stroke();
 }
 
+function draw_labels() {
+    var ctx = document.getElementById("cMap").getContext("2d");
+    ctx.font = Math.max(map.zoom,"10") + "px sans-serif";
+    ctx.textBaseline = "middle";
+
+    let t = ctx.getTransform();
+    ctx.translate(-map.offset.x * map.zoom + map.zoom/2, -map.offset.z * map.zoom + map.zoom/2);
+    ctx.beginPath();
+
+    var max_x = map.offset.x + map.size.x -1;
+    var max_y = map.offset.z + map.size.z -1;
+
+    var redraw_label;
+    let draw_label = (label) => {
+        if ( map.offset.x <= label.x && label.x <= max_x
+          && map.offset.z <= (0-label.z) && (0-label.z) <= max_y
+           ) {
+            ctx.fillText(label.text, (label.x +1) * map.zoom, (0-label.z) * map.zoom - map.zoom);
+            ctx.rect(label.x * map.zoom - map.zoom/2, (0-label.z) * map.zoom - map.zoom/2, map.zoom,  -map.zoom);
+            ctx.stroke();
+            if (label.value == poi.value) redraw_label = label;
+        }
+    };
+
+    ctx.shadowColor = "#000";
+    ctx.shadowBlur = 1;
+    ctx.shadowOffsetX = 1;
+    ctx.shadowOffsetY = 1;
+
+    ctx.lineWidth = 1
+    ctx.strokeStyle = "#ccc";
+    ctx.fillStyle = "#ccc";
+    map.labels.forEach(draw_label);
+
+    if (redraw_label) {
+        ctx.beginPath();
+        ctx.strokeStyle = "#fff";
+        ctx.fillStyle = "#fff";
+        draw_label(redraw_label);
+    }
+
+    // reset
+    ctx.setTransform(t);
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = 0;
+}
+
 function draw_map_fin() {
 
     if (mouse.button) return;
@@ -289,6 +360,7 @@ function draw_map_fin() {
     if (map.cb_draw_map_fin) map.cb_draw_map_fin();
 
     draw_grid();
+    draw_labels();
     draw_sel();
     draw_hud();
 }
