@@ -30,6 +30,45 @@ var map =
         [ { x:0, z:0, text: "spawn", type: "poi" }
         ]
     , cb_draw_map_fin: null
+    , addLabelsPoi: ((ary) => {
+            ary.forEach(([x, z, text]) => {
+                map.labels.push({x:x, z:z, text:text, type: "poi"});
+            });
+        })
+    , addLabelCluster: ((x, y, z, name, max_distance = 12) => {
+            function add_cluster(label) {
+                var i = map.labels.length -1;
+                if (i == -1) return false;
+                var cluster = map.labels[i];
+                if (!cluster || cluster.type != "cluster" || cluster.name != label.text) return false;
+
+                // distance
+                var x = cluster.x - label.x;
+                var z = cluster.z - label.z;
+                if (Math.sqrt(x*x + z*z) > max_distance) return false;
+
+                cluster.vectors.push({ x:label.x, y:label.y, z:label.z});
+                function center (ary) {
+                    var min = Math.min(...ary);
+                    return min + ((Math.max(...ary) - min) >> 1);
+                    //return min + Math.round((Math.max(...ary) - min) / 2);
+                }
+                cluster.x = center(cluster.vectors.map((v) => v.x));
+                cluster.z = center(cluster.vectors.map((v) => v.z));
+                cluster.text = (cluster.vectors.length + 1) + ' ' + cluster.name;
+
+                map.labels[i] = cluster;
+                return true;
+            }
+            var label = { x:x, y:y, z:z, text:name };
+            if (! add_cluster(label))
+                map.labels.push(Object.assign(label, { name: name, type: "cluster", vectors: [ {x:x, y:y, z:z} ]}));
+        })
+    , inViewport: ((x,z) => {
+            return map.offset.x <= x     && x     <= map.offset.x + map.size.x -1
+                && map.offset.z <= (0-z) && (0-z) <= map.offset.z + map.size.z -1
+                ;
+        })
     };
 
 var sel =
@@ -159,22 +198,25 @@ window.onload = function () {
 
     //function addPOI(pois) {
     //var sel = document.getElementById('poi');
-    map.labels.forEach((label) => {
-        if (label.type == "poi") {
-            var opt = document.createElement('option');
-            label.value = opt.value = label.x + "," + label.z;
-            opt.innerHTML = (label.text || "")
-                + " (" + label.x
-                + ((label.y != undefined) ? "," + label.y : "")
-                + "," + label.z
-                + ")";
-            poi.appendChild(opt);
-        }
+    map.labels.forEach((label, index) => {
+        var opt = document.createElement('option');
+        opt.value = index;
+        opt.innerHTML = (label.text || "")
+            + " (" + label.x
+            + ((label.y != undefined) ? "," + label.y : "")
+            + "," + label.z
+            + ")";
+        poi.appendChild(opt);
     });
 
     document.getElementById("poi").onchange = function() {
-        center.value = this.value;
-        center.onchange();
+        var label = map.labels[this.value];
+        if (map.inViewport(label.x, label.z)) {
+            draw_labels();
+        } else {
+            center.value = label.x + "," + label.z;
+            center.onchange();
+        }
     }
 
     // set current values
@@ -314,18 +356,16 @@ function draw_labels() {
     ctx.translate(-map.offset.x * map.zoom + map.zoom/2, -map.offset.z * map.zoom + map.zoom/2);
     ctx.beginPath();
 
-    var max_x = map.offset.x + map.size.x -1;
-    var max_y = map.offset.z + map.size.z -1;
-
-    var redraw_label;
-    let draw_label = (label) => {
-        if ( map.offset.x <= label.x && label.x <= max_x
-          && map.offset.z <= (0-label.z) && (0-label.z) <= max_y
-           ) {
-            ctx.fillText(label.text, (label.x +1) * map.zoom, (0-label.z) * map.zoom - map.zoom);
-            ctx.rect(label.x * map.zoom - map.zoom/2, (0-label.z) * map.zoom - map.zoom/2, map.zoom,  -map.zoom);
+    let draw_label = (label, index) => {
+        let draw_node = (v) => {
+            ctx.rect(v.x * map.zoom - (map.zoom >> 1), (0-v.z) * map.zoom - (map.zoom >> 1), map.zoom,  -map.zoom);
             ctx.stroke();
-            if (label.value == poi.value) redraw_label = label;
+        }
+        ctx.fillText(label.text, (label.x +1) * map.zoom, (0-label.z) * map.zoom - map.zoom);
+        if (label.type == "cluster") {
+            label.vectors.forEach(draw_node);
+        } else {
+            draw_node(label);
         }
     };
 
@@ -337,13 +377,25 @@ function draw_labels() {
     ctx.lineWidth = 1
     ctx.strokeStyle = "#ccc";
     ctx.fillStyle = "#ccc";
-    map.labels.forEach(draw_label);
+    //map.labels.forEach(draw_label);
+    for(var i  = 0; i < poi.options.length; i++) {
+        var option = poi.options[i];
+        if (option.disabled)  continue;
+        var label = map.labels[parseInt(option.value)];
+        if (map.inViewport(label.x, label.z)) {
+            option.style = "color:#000";
+            draw_label(label);
+        } else {
+            option.style = "color:#666";
+        }
+    }
 
-    if (redraw_label) {
+    var i = parseInt(poi.value);
+    if (!isNaN(i) && map.inViewport(map.labels[i].x, map.labels[i].z)) {
         ctx.beginPath();
         ctx.strokeStyle = "#fff";
         ctx.fillStyle = "#fff";
-        draw_label(redraw_label);
+        draw_label(map.labels[i], i);
     }
 
     // reset
