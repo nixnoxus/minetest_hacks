@@ -98,7 +98,7 @@ function mxz(e) {
 
         // coresponding map coordinates
     m.bx = map.offset.x + Math.floor(m.mx / map.zoom);
-    m.bz = map.offset.z + Math.floor(m.my / map.zoom);
+    m.bz = 0 - (map.offset.z + Math.floor(m.my / map.zoom));
     return m;
 }
 
@@ -171,7 +171,7 @@ window.onload = function () {
     }
 
     if (cMap.addEventListener && 1)
-        cMap.addEventListener('DOMMouseScroll', wheel, false);
+        cMap.addEventListener('wheel', wheel, false);
 
     draw_map_center();
 
@@ -233,9 +233,9 @@ window.onload = function () {
 function wheel(e) {
     var now = mxz(e);
 //    console.log("wheel");
-    if (e.detail > 0 && map.zoom > 1/32)
+    if (e.deltaY > 0 && map.zoom > 1/32)
         map.zoom /= 2;
-    else if (e.detail < 0 && map.zoom < 32)
+    else if (e.deltaY < 0 && map.zoom < 32)
         map.zoom *= 2;
     else
         return;
@@ -453,7 +453,7 @@ function draw_sel() {
     s.borderWidth = ((map.zoom >> 1) || 1) + "px";
 
     s.left = ((Math.min(sel.start.bx, sel.end.bx) - map.offset.x) * map.zoom) + "px";
-    s.top  = ((Math.min(sel.start.bz, sel.end.bz) - map.offset.z) * map.zoom ) + "px";
+    s.top  = ((Math.min(0-sel.start.bz, 0-sel.end.bz) - map.offset.z) * map.zoom ) + "px";
     s.width  = (Math.abs((sel.end.bx) - (sel.start.bx)) * map.zoom) + "px";
     s.height = (Math.abs((sel.end.bz) - (sel.start.bz)) * map.zoom) + "px";
 }
@@ -513,8 +513,8 @@ function mousemove(e) {
     if (sel.start) {
         var xx,zz;
         hud.innerHTML = " selected X,Z:"
-            + sel.start.bx + "," + (0 - sel.start.bz)
-            + "  " +sel.end.bx + "," + (0 - sel.end.bz)
+            + sel.start.bx + "," + sel.start.bz
+            + "  " +sel.end.bx + "," + sel.end.bz
             + " (" + (xx = Math.abs(sel.end.bx - sel.start.bx) +1)
             + "*" + (zz = Math.abs(sel.end.bz - sel.start.bz) +1)
             + "=" + (xx*zz)
@@ -526,7 +526,7 @@ function mousemove(e) {
     }
     if (! (map.tool == "select" && mouse.button)) {
         hud.innerHTML = "X,Z:"
-            + now.bx + "," + (0 - now.bz)
+            + now.bx + "," + now.bz
             + " (" + Math.floor(now.bx /16)
             + "," + Math.floor((now.bz -iy_offset) /16)
             + ")" + hud.innerHTML
