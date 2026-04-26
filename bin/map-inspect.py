@@ -887,31 +887,39 @@ class Map:
                 b = "_" if i < y_count -1 and y // MAP_BLOCKSIZE != y_sorted[i+1] // MAP_BLOCKSIZE else " "
                 print(fmt_y.format(block_stat[n]['y'][y], y, b, 100 * f, "=" * int(columns_y * f)))
 
-    def _find_node(self, node_name, var=None, val=None):
-        for block in self.iter_blocks():
-            id = block.name2id(node_name)
-            if id:
-                for pos in range(0, 4096):
-                    if id == block.get_param0(pos):
-                        if var is None:
-                            logging.info("found %s @ %s", node_name, block.vector.node_pos(pos))
-                            yield block, pos
-                        else:
-                            v = block.get_metadata(pos, var)
-                            logging.info("found %s @ %s %s=%s", node_name, block.vector.node_pos(pos), var, v)
-                            if callable(val):
-                                if val(v):
-                                    yield block, pos
-                            elif val is None or v == val:
-                                yield block, pos
+    def _find_node(self, names, var=None, val=None):
+        def _by_name(block, id):
+            return block.id2name[id] == names
 
-    def find_node(self, node_name, var=None, val=None):
-        for block, pos in self._find_node(node_name, var, val):
+        def _by_re_names(block, id):
+            for re_name in names:
+                if re.search(re_name, block.id2name[id]):
+                    return True
+
+        cb_filter_name = type(names) == list and _by_re_names or _by_name
+
+        def cb_filter_arg(block, id, pos):
+            v = block.get_metadata(pos, var)
+            if callable(val):
+                return val(v)
+            else:
+                return val is None or v == val
+
+        for block in self.iter_blocks():
+            for id in filter(lambda id: cb_filter_name(block,id), block.id2name.keys()):
+                for pos in filter(lambda pos: id == block.get_param0(pos), range(0, 4096)):
+                    if var == None or cb_filter_arg(block, id, pos):
+                        yield id, block, pos
+
+    def find_node(self, names, var=None, val=None):
+        for id, block, pos in self._find_node(names, var, val):
             self.dump_node(block, pos)
 
     def find_neighbor_node(self, node_name, var=None, val=None):
         ary = []
-        for block, pos in self._find_node(node_name, var, val):
+        for id, block, pos in self._find_node(node_name, var, val):
+            v = block.get_metadata(pos, var)
+            logging.info("found %s @ %s %s=%s", node_name, block.vector.node_pos(pos), var, v)
             ary.append(block.vector.node_pos(pos))
 
         pairs = []
@@ -922,7 +930,7 @@ class Map:
                     , "pos1": str(ary[a])
                     , "pos2": str(ary[b])
                     })
-        dumper({ "spawners": list(sorted(pairs, key=lambda n: n["distance"])) })
+        dumper({ "neighbors": list(sorted(pairs, key=lambda n: n["distance"])) })
 
     def find_item(self, item_name):
         for block in self.iter_blocks():
@@ -949,11 +957,11 @@ if __name__ == "__main__":
     a = argparse.ArgumentParser(description='luanti map v29 inspection tool'
     , formatter_class=argparse.RawDescriptionHelpFormatter
     , epilog= f"""samples:
-     $ {call} --node mcl_chests:chest_small ~/.minetest/worlds/mcl-test/map.sqlite
-     $ {call} --node mcl_mobspawners:spawner  ~/.minetest/worlds/mcl-test/map.sqlite
-     $ {call} --spawners mobs_mc:skeleton ~/.minetest/worlds/mcl-test/map.sqlite
-     $ {call} --item mcl_nether:netherite_upgrade_template ~/.minetest/worlds/mcl-test/map.sqlite
-     $ {call} --object mcl_minecarts:minecart ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --node mcl_chests:chest_small -- ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --node mcl_mobspawners:spawner -- ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --spawners mobs_mc:skeleton -- ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --item mcl_nether:netherite_upgrade_template -- ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --object mcl_minecarts:minecart -- ~/.minetest/worlds/mcl-test/map.sqlite
     """)
     a.add_argument('-v', '--verbose', action='store_true', help="show info messages")
     a.add_argument('-d', '--debug', action='store_true', help="show debug and info messages")
@@ -961,12 +969,12 @@ if __name__ == "__main__":
     a.add_argument('--radius', default=0, type=int, help=f"search radius in MapBlocks(1 = {MAP_BLOCKSIZE} nodes")
 
     a.add_argument('map_sqlite', help="path to 'map.sqlite'")
-    a.add_argument('node_pos', nargs='*', help="node position(s) (i.e.: 0,0,0")
+    a.add_argument('node_pos', nargs='*', help="node position(s) (i.e.: 0,0,0)")
 
     g = a.add_argument_group("query options")
     x = g.add_mutually_exclusive_group()
     x.add_argument('--spawners', help="find neighboring spawners")
-    x.add_argument('--node', help="find node by name")
+    x.add_argument('--node', nargs='+', help="find node by name regex")
     x.add_argument('--item', help="find item by name")
     x.add_argument('--object', help="find object by name")
     x.add_argument('--timers', action='store_true', help="list node timers")
@@ -987,9 +995,6 @@ if __name__ == "__main__":
     if args.spawners:
         if args.spawners.startswith("mcl_") or args.spawners.startswith("mobs_mc"):
             map.find_neighbor_node("mcl_mobspawners:spawner", "Mob", args.spawners)
-            #def cb_value(value):
-            #    return value == args.spawners
-            #map.find_neighbor_node("mcl_mobspawners:spawner", "Mob", cb_value)
         else:
             def cb_value(value):
                 return value.split(" ")[0] == args.spawners
