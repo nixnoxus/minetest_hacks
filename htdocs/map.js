@@ -28,8 +28,16 @@ var map =
     , size: {x:null,z:null }
     , labels:
         [ { x:0, z:0, text: "spawn", type: "poi" }
+        //, { x:0, y:0, z:0, text: "", type: "group", name: "" }
+        //, { x:0, y:0, z:0, text: "", type: "cluster", name: "" }
         ]
     , cb_draw_map_fin: null
+    , addLabel: ((x, y, z, text, group) => {
+            if (group === undefined)
+                map.labels.push({x:x, y:y, z:z, text:text, type: "poi"});
+            else
+                map.labels.push({x:x, y:y, z:z, text:text, type: "group", name:group});
+        })
     , addLabelsPoi: ((ary) => {
             ary.forEach(([x, z, text]) => {
                 map.labels.push({x:x, z:z, text:text, type: "poi"});
@@ -55,7 +63,7 @@ var map =
                 }
                 cluster.x = center(cluster.vectors.map((v) => v.x));
                 cluster.z = center(cluster.vectors.map((v) => v.z));
-                cluster.text = (cluster.vectors.length + 1) + ' ' + cluster.name;
+                cluster.text = cluster.vectors.length + ' ' + cluster.name;
 
                 map.labels[i] = cluster;
                 return true;
@@ -196,17 +204,38 @@ window.onload = function () {
         map.tool = document.getElementById("tool").value;
     }
 
-    //function addPOI(pois) {
-    //var sel = document.getElementById('poi');
-    map.labels.forEach((label, index) => {
-        var opt = document.createElement('option');
-        opt.value = index;
-        opt.innerHTML = (label.text || "")
-            + " (" + label.x
-            + ((label.y != undefined) ? "," + label.y : "")
-            + "," + label.z
-            + ")";
-        poi.appendChild(opt);
+    function gen_optgroup(group, cb_filter) {
+        var grp = document.createElement('optgroup');
+        var grp_a = document.createAttribute("label");
+        grp_a.value = group;
+        grp.setAttributeNode(grp_a);
+
+        map.labels
+            .forEach((label, index) => {
+                if (! cb_filter(label, index)) return;
+                var opt = document.createElement('option');
+                opt.value = index;
+                opt.innerHTML = (label.text || "")
+                    + " (" + label.x
+                    + ((label.y != undefined) ? "," + label.y : "")
+                    + "," + label.z
+                    + ")";
+                grp.appendChild(opt);
+        })
+
+        return grp;
+    };
+    Array("poi").forEach(group => {
+        poi.appendChild(gen_optgroup(group, (label, index) => label.type == group));
+    });
+    var groups = [];
+    map.labels
+        .filter((label, index) => [ "cluster", "group" ].includes(label.type))
+        .forEach((label, index) => {
+            if (groups.indexOf(label.name) == -1) groups.push(label.name);
+        });
+    groups.sort().forEach(group => {
+        poi.appendChild(gen_optgroup(group, (label, index) => ([ "cluster", "group" ].includes(label.type) && label.name == group)));
     });
 
     document.getElementById("poi").onchange = function() {
