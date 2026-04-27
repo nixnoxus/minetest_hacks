@@ -268,6 +268,7 @@ function draw_poi() {
     }
 
     var is_group = label => [ "cluster", "group" ].includes(label.type);
+    var value = parseInt(poi.value);
 
     while (poi.hasChildNodes()) poi.removeChild(poi.lastChild);
 
@@ -297,6 +298,7 @@ function draw_poi() {
                 )
             ));
         });
+    poi.value = value;
 }
 
 function wheel(e) {
@@ -422,15 +424,18 @@ function draw_labels() {
     ctx.textBaseline = "middle";
 
     let t = ctx.getTransform();
-    ctx.translate(-map.offset.x * map.zoom + map.zoom/2, -map.offset.z * map.zoom + map.zoom/2);
+    let sub = map.zoom/2;
+
+    ctx.translate(-map.offset.x * map.zoom + sub, -map.offset.z * map.zoom + sub);
     ctx.beginPath();
 
-    let draw_label = (label, index) => {
-        let draw_node = (v) => {
-            ctx.rect(v.x * map.zoom - (map.zoom >> 1), (0-v.z) * map.zoom - (map.zoom >> 1), map.zoom,  -map.zoom);
-            ctx.stroke();
-        }
-        ctx.fillText(label.text, (label.x +1) * map.zoom, (0-label.z) * map.zoom - map.zoom);
+    draw_node = (v) =>
+        ctx.strokeRect(v.x * map.zoom - sub, (0-v.z) * map.zoom - sub, map.zoom,  -map.zoom);
+
+    draw_label = (label, index) => {
+        let text = label.text;
+        if (label.y < 0) text += ' y:' + label.y;
+        ctx.fillText(text, (label.x +1) * map.zoom, (0-label.z) * map.zoom - map.zoom);
         if (label.type == "cluster") {
             label.vectors.forEach(draw_node);
         } else {
@@ -446,16 +451,15 @@ function draw_labels() {
     ctx.lineWidth = 1
     ctx.strokeStyle = "#ccc";
     ctx.fillStyle = "#ccc";
-    //map.labels.forEach(draw_label);
-    for(var i  = 0; i < poi.options.length; i++) {
-        var option = poi.options[i];
-        if (option.disabled)  continue;
-        var label = map.labels[parseInt(option.value)];
+    for(let i  = 0; i < poi.options.length; i++) {
+        let option = poi.options[i];
+        if (option.disabled) continue;
+        let label = map.labels[parseInt(option.value)];
         if (map.inViewport(label.x, label.z)) {
-            option.style = "color:#000";
+            option.style.color = "#000";
             draw_label(label);
         } else {
-            option.style = "color:#666";
+            option.style.color = "#666";
         }
     }
 
