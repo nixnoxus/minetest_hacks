@@ -32,29 +32,35 @@ var map =
         //, { x:0, y:0, z:0, text: "", type: "cluster", name: "" }
         ]
     , cb_draw_map_fin: null
-    , addLabel: ((x, y, z, text, group) => {
+    , addLabel: ((x, y, z, text, group, min_zoom = 1) => {
             if (group === undefined)
-                map.labels.push({x:x, y:y, z:z, text:text, type: "poi"});
+                map.labels.push({x:x, y:y, z:z, text:text, type: "poi", min_zoom: min_zoom});
             else
-                map.labels.push({x:x, y:y, z:z, text:text, type: "group", name:group});
+                map.labels.push({x:x, y:y, z:z, text:text, type: "group", name:group, min_zoom: min_zoom});
         })
     , addLabelsPoi: ((ary) => {
             ary.forEach(([x, z, text]) => {
                 map.labels.push({x:x, z:z, text:text, type: "poi"});
             });
         })
-    , addLabelCluster: ((x, y, z, name, max_distance = 12) => {
+    , addLabelCluster: ((x, y, z, name, max_distance = 16, min_zoom = 1) => {
+            max_distance = Math.sqrt((max_distance*max_distance)*2);
+
+            function find_cluster(label) {
+                var i = map.labels.length;
+                while (--i >= 0) {
+                    var cluster = map.labels[i];
+                    if (cluster && cluster.type == "cluster" && cluster.name == label.text) {
+                        // distance
+                        var x = cluster.x - label.x;
+                        var z = cluster.z - label.z;
+                        if (Math.sqrt(x*x + z*z) <= max_distance) return cluster;
+                    }
+                }
+            }
             function add_cluster(label) {
-                var i = map.labels.length -1;
-                if (i == -1) return false;
-                var cluster = map.labels[i];
-                if (!cluster || cluster.type != "cluster" || cluster.name != label.text) return false;
-
-                // distance
-                var x = cluster.x - label.x;
-                var z = cluster.z - label.z;
-                if (Math.sqrt(x*x + z*z) > max_distance) return false;
-
+                var cluster = find_cluster(label);
+                if (!cluster) return false;
                 cluster.vectors.push({ x:label.x, y:label.y, z:label.z});
                 function center (ary) {
                     var min = Math.min(...ary);
@@ -65,12 +71,16 @@ var map =
                 cluster.z = center(cluster.vectors.map((v) => v.z));
                 cluster.text = cluster.vectors.length + ' ' + cluster.name;
 
-                map.labels[i] = cluster;
                 return true;
             }
             var label = { x:x, y:y, z:z, text:name };
             if (! add_cluster(label))
-                map.labels.push(Object.assign(label, { name: name, type: "cluster", vectors: [ {x:x, y:y, z:z} ]}));
+                map.labels.push(Object.assign(label,
+                    { name: name
+                    , type: "cluster"
+                    , vectors: [ {x:x, y:y, z:z} ]
+                    , min_zoom: min_zoom
+                    }));
         })
     , inViewport: ((x,z) => {
             return map.offset.x <= x     && x     <= map.offset.x + map.size.x -1
@@ -189,6 +199,7 @@ window.onload = function () {
             map[id] = parseFloat(i = document.getElementById(id).value);
             //console.log("set " + id + " " + map[id] + " i "+i);
             draw_map_center();
+            draw_poi();
         } );
 
     document.getElementById("center").onchange = function() {
@@ -204,10 +215,40 @@ window.onload = function () {
         map.tool = document.getElementById("tool").value;
     }
 
+    document.getElementById("poi").onchange = function() {
+        var label = map.labels[this.value];
+        if (map.inViewport(label.x, label.z)) {
+            draw_labels();
+        } else {
+            center.value = label.x + "," + label.z;
+            center.onchange();
+        }
+    }
+
+    draw_poi();
+
+    // set current values
+    [ "zoom", "grid", "tool" ].map(id => {
+        document.getElementById(id).value = map[id];
+    });
+}
+
+function draw_poi() {
     function gen_optgroup(group, cb_filter) {
         var grp = document.createElement('optgroup');
         var grp_a = document.createAttribute("label");
-        grp_a.value = group;
+        grp_a.value = group.name;
+        if (group.min_zoom) {
+            if (group.min_zoom > map.zoom)
+                grp.setAttributeNode(document.createAttribute("disabled"));
+            if (group.min_zoom != 1/32)
+                grp_a.value += ' (zoom >= '
+                    + ((group.min_zoom >= 1)
+                        ? "x" + group.min_zoom
+                        : "/" + 1/group.min_zoom
+                      )
+                    + ")";
+        }
         grp.setAttributeNode(grp_a);
 
         map.labels
@@ -224,39 +265,38 @@ window.onload = function () {
         })
 
         return grp;
-    };
-    Array("poi").forEach(group => {
-        poi.appendChild(gen_optgroup(group, (label, index) => label.type == group));
+    }
+
+    var is_group = label => [ "cluster", "group" ].includes(label.type);
+
+    while (poi.hasChildNodes()) poi.removeChild(poi.lastChild);
+
+    Array("poi").forEach(type => {
+        poi.appendChild(gen_optgroup({ name: type }, (label, index) => label.type == type));
     });
     var groups = [];
     map.labels
-        .filter((label, index) => [ "cluster", "group" ].includes(label.type))
+        .filter((label, index) => is_group(label))
         .forEach((label, index) => {
-            if (groups.indexOf(label.name) == -1) groups.push(label.name);
+            if (! groups.find(g => g.name === label.name)) groups.push(label);
         });
-    groups.sort().forEach(group => {
-        poi.appendChild(gen_optgroup(group, (label, index) => ([ "cluster", "group" ].includes(label.type) && label.name == group)));
-    });
-
-    document.getElementById("poi").onchange = function() {
-        var label = map.labels[this.value];
-        if (map.inViewport(label.x, label.z)) {
-            draw_labels();
-        } else {
-            center.value = label.x + "," + label.z;
-            center.onchange();
-        }
-    }
-
-    // set current values
-/*
-    [  "zoom", "grid", "tool" ].map(id => {
-        document.getElementById(id).value = map[id];
+    groups
+        .sort((a,b) => {
+            if (a.name < b.name)
+                return -1;
+            else if (a.label > b.name)
+                return +1;
+            else
+                return 0;
+        })
+        .forEach(group => {
+            poi.appendChild(gen_optgroup(group, (label, index) =>
+                (is_group(label)
+                && label.name == group.name
+                && (label.min_zoom === undefined || label.min_zoom <= map.zoom)
+                )
+            ));
         });
-*/
-    var ids = [ "zoom", "grid", "tool" ];
-    for (var i = 0; i < ids.length; i++)
-        document.getElementById(ids[i]).value = map[ids[i]];
 }
 
 function wheel(e) {
@@ -269,11 +309,11 @@ function wheel(e) {
     else
         return;
 
-    document.getElementById("zoom").value = map.zoom;
-
     map.center.x = now.bx;
     map.center.z = now.bz;
+    document.getElementById("zoom").value = map.zoom;
     draw_map_center();
+    draw_poi();
 }
 
 function draw_map_center(lazy) {
