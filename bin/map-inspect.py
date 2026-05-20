@@ -583,6 +583,22 @@ class Map:
             assert rows[0][1] == "pos", rows[0][1]
             assert rows[1][1] == "data", rows[1][1]
             self.world_ge_5_12 = False
+
+            def row2block(row):
+                return Block(row['pos'], row['data'])
+
+            def sel_block(v:Vector = None):
+                if v is None:
+                    return ("SELECT `pos`, `data` FROM `blocks`")
+                else:
+                    return ("SELECT `pos`, `data` FROM `blocks` WHERE `pos` == ?", (v.block_pos,))
+
+            def sel_block_range(v_min:str = None, v_max:str = None):
+                raise RuntimeError(f"option --*-node-range is not supported in world version < 5.12")
+
+            __class__.row2block = row2block
+            __class__.sel_block = sel_block
+            __class__.sel_block_range = sel_block_range
         else:
             assert len(rows) == 4
             assert rows[0][1] == "x", rows[0][1]
@@ -590,17 +606,6 @@ class Map:
             assert rows[2][1] == "z", rows[2][1]
             assert rows[3][1] == "data", rows[3][1]
             self.world_ge_5_12 = True
-
-            def sel_block(v:Vector = None):
-                if v is None:
-                    return ("SELECT `x`, `y`, `z`, `data` FROM `blocks`")
-                else:
-                    return ("SELECT `x`, `y`, `z`, `data` FROM `blocks` WHERE `x` == ? AND `y` == ? AND `z` == ?", (v.x, v.y, v.z,))
-            def row2block(row):
-                return Block(Vec(row['x'], row['y'], row['z']), row['data'])
-
-            __class__.sel_block = sel_block
-            __class__.row2block = row2block
 
         self.args = args
         self.vectors = []
@@ -621,26 +626,47 @@ class Map:
 
     @staticmethod
     def row2block(row):
-        return Block(row['pos'], row['data'])
+        return Block(Vec(row['x'], row['y'], row['z']), row['data'])
 
     @staticmethod
     def sel_block(v:Vector = None):
         if v is None:
-            return ("SELECT `pos`, `data` FROM `blocks`")
+            return ("SELECT `x`, `y`, `z`, `data` FROM `blocks`")
         else:
-            return ("SELECT `pos`, `data` FROM `blocks` WHERE `pos` == ?", (v.block_pos,))
+            return ("SELECT `x`, `y`, `z`, `data` FROM `blocks` WHERE `x` == ? AND `y` == ? AND `z` == ?", (v.x, v.y, v.z,))
+
+    @staticmethod
+    def sel_block_range(v_min:str = None, v_max:str = None):
+        where_and = []
+        args = []
+        def add_where_v(v_str, op):
+            def add_where_n(col, op, n_str):
+                if n_str == "": return
+                where_and.append(f"`{col}` {op} ?")
+                args.append(int(n_str))
+            m = re.search(r'^\s*(-?\d+|)\s*,\s*(-?\d+|)\s*,\s*(-?\d+|)\s*$', v_str)
+            assert m
+            add_where_n("x", op, m.group(1))
+            add_where_n("y", op, m.group(2))
+            add_where_n("z", op, m.group(3))
+        if v_min is not None: add_where_v(v_min, ">=")
+        if v_max is not None: add_where_v(v_max, "<=")
+        return ("SELECT `x`, `y`, `z`, `data` FROM `blocks` WHERE " + " AND ".join(where_and), (*args,))
 
     def iter_blocks(self):
         cur = self.db.cursor()
 
-        if len(self.vectors) == 0:
-            for row in cur.execute(__class__.sel_block(None)):
-                yield __class__.row2block(row)
-        else:
+        if len(self.vectors) > 0:
             for v in self.vectors:
                 for v in v.radius(self.args.radius):
                     for row in cur.execute(*__class__.sel_block(v)):
                         yield __class__.row2block(row)
+        elif self.args.min_node_pos or self.args.max_node_pos:
+            for row in cur.execute(*__class__.sel_block_range(self.args.min_node_pos, self.args.max_node_pos)):
+                yield __class__.row2block(row)
+        else:
+            for row in cur.execute(__class__.sel_block(None)):
+                yield __class__.row2block(row)
 
     def get_short_key(self, i:int) -> str:
         return str(self.short_keys[i] if i < len(self.short_keys) else i)
@@ -970,6 +996,9 @@ if __name__ == "__main__":
 
     a.add_argument('map_sqlite', help="path to 'map.sqlite'")
     a.add_argument('node_pos', nargs='*', help="node position(s) (i.e.: 0,0,0)")
+
+    a.add_argument('--min-node-pos', help=f"min. node position (i.e.: ,-62,)")
+    a.add_argument('--max-node-pos', help=f"max. node position (i.e.: ,160,)")
 
     g = a.add_argument_group("query options")
     x = g.add_mutually_exclusive_group()
