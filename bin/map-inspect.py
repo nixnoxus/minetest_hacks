@@ -504,7 +504,7 @@ class Block:
 
     def get_param0(self, i):
         assert i in range(0, 4096)
-        o = i*2
+        o = i * 2
         return struct.unpack(">H", self.data[self.node_ptr + o:self.node_ptr + o + 2])[0]
 
     def get_param1(self, i):
@@ -570,6 +570,132 @@ class Block:
             , **kwargs
             }})
 
+class Visualize:
+
+    @staticmethod
+    def scale(xx, l):
+        if xx <= l:
+            return (1, xx)
+        else:
+            return (xx / l, l)
+
+    def __init__(self, node_stat:VecStat, vector = None, cb_mark_vectors = None):
+        self.node_stat = node_stat
+        self.vector = vector
+        self.cb_mark_vectors = cb_mark_vectors
+
+        self.o_len = max(len(str(y)) for y in \
+            [ self.node_stat.min.y
+            , self.node_stat.max.y
+            , self.node_stat.min.z
+            , self.node_stat.max.z
+            ])
+
+        x_len_max, self.y_len_max = os.get_terminal_size()
+        x_len_max = (x_len_max or 80) -2 - self.o_len -1
+        self.y_len_max = (self.y_len_max or 25) -2
+
+        self.x_div, self.x_len = __class__.scale(self.node_stat.max.x - self.node_stat.min.x +1, x_len_max)
+
+        # X scala
+        x_min = self.node_stat.min.x
+        ox_len = max(len(str(x)) for x in \
+            [ self.node_stat.min.x
+            , self.node_stat.max.x
+            ])
+
+        self.s_ord = f"{'':{self.o_len}}"
+        self.s_top = self.s_ord
+        self.s_btm = self.s_ord
+        for i in range(0, int(min(x_len_max, self.x_len) / (ox_len+1))):
+            self.s_ord += f" {int(x_min + i*self.x_div*(ox_len+1) + self.x_div/2):{ox_len}}"
+            self.s_top += f" {'v':{ox_len}}"
+            self.s_btm += f" {'^':{ox_len}}"
+
+    def show_ordinate(self, ordinate):
+        y_min = getattr(self.node_stat.min, ordinate)
+        y_div, y_len = __class__.scale(getattr(self.node_stat.max, ordinate) - y_min +1, self.y_len_max)
+
+        rows = []
+        for y in range(y_len):
+            rows.append("")
+            for x in range(self.x_len):
+                rows[y] += "."
+
+        def mark_vector(v:Vec, c:str):
+            x = int((v.x - self.node_stat.min.x) / self.x_div)
+            y = int((getattr(v, ordinate) - y_min) / y_div)
+            if 0 <= x and x < self.x_len and 0 <= y and y < y_len:
+                if len(c) > 1:
+                    c = '(' + c + ')'
+                rows[y] = rows[y][:x] + c + rows[y][x+len(c):]
+
+        # mark basis vector and borders
+        if self.vector is not None:
+            if self.vector.pos is not None:
+                v = self.vector.node_pos()
+                vb = Vec \
+                    ( v.x // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                    , v.y // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                    , v.z // MAP_BLOCKSIZE * MAP_BLOCKSIZE
+                    )
+
+                def mark_border(v1:Vec, v2:Vec):
+                    v = VecStat(v1, v2)
+
+                    def v_set(v:Vec, ordinate:str, value:int):
+                        v2 = Vec(v.x, v.y, v.z)
+                        setattr(v2, ordinate, value)
+                        return v2
+
+                    def v_lines(v:VecStat, ordinate:str, c:str):
+                        v_min = getattr(v.min, ordinate)
+                        v_max = getattr(v.max, ordinate)
+
+                        for value in range(v_min +1, v_max):
+                            mark_vector(v_set(v.min, ordinate, value), c)
+                            mark_vector(v_set(v.max, ordinate, value), c)
+
+                        mark_vector(v_set(v.min, ordinate, v_min), "+")
+                        mark_vector(v_set(v.min, ordinate, v_max), "+")
+                        mark_vector(v_set(v.max, ordinate, v_min), "+")
+                        mark_vector(v_set(v.max, ordinate, v_max), "+")
+
+                    v_lines(v, "x", "-")
+                    v_lines(v, ordinate, "|")
+
+                # 0: current MapBlock
+                # 4: active MapBlocks
+                for r in [ 0, 2, 4 ]:
+                    o_min = (0 - r) * MAP_BLOCKSIZE
+                    o_max = (1 + r) * MAP_BLOCKSIZE
+                    mark_border(vb.offset(Vec(o_min, o_min, o_min)), vb.offset(Vec(o_max, o_max, o_max)))
+
+                mark_vector(v, "*")
+
+            if self.cb_mark_vectors:
+                self.cb_mark_vectors(mark_vector)
+
+        if ordinate == "z":
+            print()
+            print(self.s_ord)
+            print(self.s_top)
+
+        print(f"{ordinate} +/-{y_div/2:.2f} \\ x +/-{self.x_div/2:.2f}")
+        for y in range(y_len):
+            i = y_len -1 -y
+            print(f"{int(y_min + i*y_div + y_div/2):{self.o_len}} "  + rows[i])
+        print()
+
+        print(self.s_btm)
+        print(self.s_ord)
+
+        if ordinate == "z":
+            print(self.s_top)
+
+    def show(self):
+        self.show_ordinate("z") # top
+        self.show_ordinate("y") # front (south)
 
 class Map:
     def __init__(self, sqlite_file, args):
@@ -668,6 +794,11 @@ class Map:
             for row in cur.execute(__class__.sel_block(None)):
                 yield __class__.row2block(row)
 
+    def iter_nodes(self):
+        for block in self.iter_blocks():
+            for pos in filter(lambda pos: True, range(0, 4096)):
+                yield block, pos
+
     def get_short_key(self, i:int) -> str:
         return str(self.short_keys[i] if i < len(self.short_keys) else i)
 
@@ -684,7 +815,7 @@ class Map:
         self.node_stat.add(v)
         self.node_vecs.append(v)
 
-    def visualize(self):
+    def visualize(self, cb_mark_vectors):
         if self.node_stat.count == 0: return
 
         if len(self.vectors) == 1:
@@ -693,120 +824,48 @@ class Map:
         else:
             node_stat = self.node_stat
 
-        o_len = max(len(str(y)) for y in \
-            [ node_stat.min.y
-            , node_stat.max.y
-            , node_stat.min.z
-            , node_stat.max.z
-            ])
+        vector = None
+        if len(self.vectors) == 1:
+            if self.vectors[0].pos is not None:
+                vector = self.vectors[0]
 
-        x_len_max, y_len_max = os.get_terminal_size()
-        x_len_max = (x_len_max or 80) -2 - o_len -1
-        y_len_max = (y_len_max or 25) -2
+        v = Visualize(node_stat, vector, cb_mark_vectors)
+        v.show()
 
-        def scale(xx, l):
-            if xx <= l:
-                return (1, xx)
-            else:
-                return (xx / l, l)
-
-        x_div, x_len = scale(node_stat.max.x - node_stat.min.x +1, x_len_max)
-
-        # X scala
-        x_min = node_stat.min.x
-        ox_len = max(len(str(x)) for x in \
-            [ node_stat.min.x
-            , node_stat.max.x
-            ])
-
-        s_ord = f"{'':{o_len}}"
-        s_top = s_ord
-        s_btm = s_ord
-        for i in range(0, int(min(x_len_max, x_len) / (ox_len+1))):
-            s_ord += f" {int(x_min + i*x_div*(ox_len+1) + x_div/2):{ox_len}}"
-            s_top += f" {'v':{ox_len}}"
-            s_btm += f" {'^':{ox_len}}"
-        print()
-        print(s_ord)
-        print(s_top)
-
-        def show(ordinate):
-            y_min = getattr(node_stat.min, ordinate)
-            y_div, y_len = scale(getattr(node_stat.max, ordinate) - y_min +1, y_len_max)
-
-            rows = []
-            for y in range(y_len):
-                rows.append("")
-                for x in range(x_len):
-                    rows[y] += "."
-
-            def mark_vector(v:Vec, c:str):
-                x = int((v.x - node_stat.min.x) / x_div)
-                y = int((getattr(v, ordinate) - y_min) / y_div)
-                if 0 <= x and x < x_len and 0 <= y and y < y_len:
-                    if len(c) > 1:
-                        c = '(' + c + ')'
-                    rows[y] = rows[y][:x] + c + rows[y][x+len(c):]
-
-            def mark_border(v1:Vec, v2:Vec):
-                v = VecStat(v1, v2)
-
-                def v_set(v:Vec, ordinate:str, value:int):
-                    v2 = Vec(v.x, v.y, v.z)
-                    setattr(v2, ordinate, value)
-                    return v2
-
-                def v_lines(v:VecStat, ordinate:str, c:str):
-                    v_min = getattr(v.min, ordinate)
-                    v_max = getattr(v.max, ordinate)
-
-                    for value in range(v_min +1, v_max):
-                        mark_vector(v_set(v.min, ordinate, value), c)
-                        mark_vector(v_set(v.max, ordinate, value), c)
-
-                    mark_vector(v_set(v.min, ordinate, v_min), "+")
-                    mark_vector(v_set(v.min, ordinate, v_max), "+")
-                    mark_vector(v_set(v.max, ordinate, v_min), "+")
-                    mark_vector(v_set(v.max, ordinate, v_max), "+")
-
-                v_lines(v, "x", "-")
-                v_lines(v, ordinate, "|")
-
-
-            # mark basis vector and borders
-            if len(self.vectors) == 1:
-                if self.vectors[0].pos is not None:
-                    v = self.vectors[0].node_pos()
-                    vb = Vec \
-                        ( v.x // MAP_BLOCKSIZE * MAP_BLOCKSIZE
-                        , v.y // MAP_BLOCKSIZE * MAP_BLOCKSIZE
-                        , v.z // MAP_BLOCKSIZE * MAP_BLOCKSIZE
-                        )
-
-                    # 0: current MapBlock
-                    # 4: active MapBlocks
-                    for r in [ 0, 2, 4 ]:
-                        o_min = (0 - r) * MAP_BLOCKSIZE
-                        o_max = (1 + r) * MAP_BLOCKSIZE
-                        mark_border(vb.offset(Vec(o_min, o_min, o_min)), vb.offset(Vec(o_max, o_max, o_max)))
-
-                    mark_vector(v, "*")
-
+    def visualize_matches(self):
+        def cb_mark_vectors(cb_mark_vector):
             for i in range(0, len(self.node_vecs)):
-                mark_vector(self.node_vecs[i], self.get_short_key(i))
+                cb_mark_vector(self.node_vecs[i], self.get_short_key(i))
+        self.visualize(cb_mark_vectors)
 
-            print(f"{ordinate} +/-{y_div/2:.2f} \\ x +/-{x_div/2:.2f}")
-            for y in range(y_len):
-                i = y_len -1 -y
-                print(f"{int(y_min + i*y_div + y_div/2):{o_len}} "  + rows[i])
-            print()
-        show("z")
-        print(s_btm)
-        print(s_ord)
-        print(s_top)
-        show("y")
-        print(s_btm)
-        print(s_ord)
+    def view_ordinate(self, ordinate:str):
+        names = []
+        count = {}
+        v2c = {}
+        filter_o = getattr(Vector(self.args.node_pos[0]).node_pos(), ordinate)
+        for block, pos in self.iter_nodes():
+            if filter_o != getattr(block.vector.node_pos(pos), ordinate): continue
+            id = block.get_param0(pos)
+            name = block.id2name[id]
+            if name != 'air':
+                if not name in names:
+                    names.append(name)
+                    count[name] = 1
+                else:
+                    count[name] +=1
+                c = self.get_short_key(names.index(name))
+                v = block.vector.node_pos(pos)
+                self.node_stat.add(v)
+                v2c[v] = c
+
+        for name in names:
+            print(f"{self.get_short_key(names.index(name)):3s} {count[name]:5d} {name}")
+
+        def cb_mark_vectors(cb_mark_vector):
+            for v in v2c.keys():
+                cb_mark_vector(v, v2c[v])
+
+        self.visualize(cb_mark_vectors)
 
     def get_block_pos_stat(self):
         stat = VecStat(*(block.vector for block in self.iter_blocks()))
@@ -988,6 +1047,7 @@ if __name__ == "__main__":
      $ {call} --spawners mobs_mc:skeleton -- ~/.minetest/worlds/mcl-test/map.sqlite
      $ {call} --item mcl_nether:netherite_upgrade_template -- ~/.minetest/worlds/mcl-test/map.sqlite
      $ {call} --object mcl_minecarts:minecart -- ~/.minetest/worlds/mcl-test/map.sqlite
+     $ {call} --radius 0 /dev/shm/server_*_30002/map.sqlite 0,0,0 --view
     """)
     a.add_argument('-v', '--verbose', action='store_true', help="show info messages")
     a.add_argument('-d', '--debug', action='store_true', help="show debug and info messages")
@@ -1007,6 +1067,8 @@ if __name__ == "__main__":
     x.add_argument('--item', help="find item by name")
     x.add_argument('--object', help="find object by name")
     x.add_argument('--timers', action='store_true', help="list node timers")
+    x.add_argument('--view', choices= [ 'y', 'z' ], metavar = "ORDINATE", help="view 2d map at node_pos ordinate 'y' or 'z'")
+
     args = a.parse_args()
 
     if args.debug:
@@ -1036,6 +1098,9 @@ if __name__ == "__main__":
         map.find_object(args.object)
     elif args.timers:
         map.find_timers()
+    elif args.view:
+        map.view_ordinate(args.view)
+        sys.exit(0)
     else:
         #map.get_block_pos_stat()
         map.print_block_stat(use_dumper = args.json)
@@ -1043,4 +1108,4 @@ if __name__ == "__main__":
     if args.json:
         print(json.dumps(data, indent = 4))
     else:
-        map.visualize()
+        map.visualize_matches()
